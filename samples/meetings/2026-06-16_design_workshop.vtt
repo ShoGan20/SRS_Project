@@ -1,0 +1,37 @@
+WEBVTT
+
+1
+00:00:01.000 --> 00:00:06.500
+<v Marco Rossi>Okay, so I checked with the SAP team about the API limits.
+
+2
+00:00:06.500 --> 00:00:12.000
+<v Marco Rossi>The gateway allows 50 requests per second for the billing endpoints, so we will need caching for bill lists.
+
+3
+00:00:12.500 --> 00:00:18.000
+<v Tom Becker>Hosting is confirmed on Azure, UK South region, because of data residency. Customer data must stay in the UK.
+
+4
+00:00:18.500 --> 00:00:25.000
+<v Aisha Khan>For bills, we have standard, estimated, and corrected bills. Corrected bills must show the reason for the correction.
+
+5
+00:00:25.500 --> 00:00:31.000
+<v Priya Nair>We also need accessibility, WCAG 2.2 AA at minimum, a lot of our customers are elderly.
+
+6
+00:00:31.500 --> 00:00:38.000
+<v Tom Becker>Pages should load in under two seconds for 95 percent of requests. And availability of 99.5 percent outside the Sunday maintenance window.
+
+7
+00:00:38.500 --> 00:00:44.000
+<v Aisha Khan>Customers should get an email notification when a new bill is ready.
+
+8
+00:00:44.500 --> 00:00:50.000
+<v Priya Nair>Could we add SMS notifications too? Maybe as a nice to have.
+
+9
+00:00:50.500 --> 00:00:55.000
+<v Marco Rossi>Sure, but we don't have an SMS provider yet, so that is open.

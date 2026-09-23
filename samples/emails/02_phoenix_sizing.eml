@@ -1,0 +1,28 @@
+From: Tom Becker <tom.becker@example-energy.co.uk>
+To: Marco Rossi <marco.rossi@example-energy.co.uk>
+Subject: Phoenix infrastructure sizing
+Date: Mon, 29 Jun 2026 14:03:00 +0100
+MIME-Version: 1.0
+Content-Type: multipart/alternative; boundary="b1"
+
+--b1
+Content-Type: text/plain; charset="utf-8"
+
+Marco,
+
+The Azure quote is based on 2,000 concurrent users at peak, which is what the
+infrastructure budget (GBP 180k per year) covers. Anything higher needs a
+budget change request.
+
+We also need the SAP bill-list cache to refresh at least every 4 hours.
+
+Tom
+
+--b1
+Content-Type: text/html; charset="utf-8"
+
+<p>Marco,</p><p>The Azure quote is based on 2,000 concurrent users at peak, which is what the
+infrastructure budget (GBP 180k per year) covers. Anything higher needs a budget change request.</p>
+<p>We also need the SAP bill-list cache to refresh at least every 4 hours.</p><p>Tom</p>
+
+--b1--

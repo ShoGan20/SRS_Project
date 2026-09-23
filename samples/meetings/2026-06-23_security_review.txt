@@ -1,0 +1,11 @@
+Phoenix - Security review notes
+23 June 2026
+Present: Tom Becker, Leila Haddad (Information Security), Marco Rossi
+
+- Leila: login must use MFA (email one-time code or authenticator app). Lock the account for 15 minutes after 5 failed attempts.
+- Sessions time out after 15 minutes of inactivity.
+- Card payments must go through the PCI-DSS compliant payment provider (hosted payment page). The portal must never store card numbers.
+- All personal data encrypted at rest and in transit (TLS 1.2+).
+- Audit log of logins, payments and meter reading submissions, kept for 7 years.
+- Penetration test required before go-live.
+- Open: GDPR data retention period for closed accounts - Legal to advise.

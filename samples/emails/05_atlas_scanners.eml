@@ -1,0 +1,14 @@
+From: Dev Patel <dev.patel@example-energy.co.uk>
+To: Warehouse Ops <warehouse-ops@example-energy.co.uk>
+Subject: Project Atlas - handheld scanner rollout
+Date: Tue, 30 Jun 2026 10:15:00 +0100
+MIME-Version: 1.0
+Content-Type: text/plain; charset="utf-8"
+
+Team,
+
+The new handheld barcode scanners for the Atlas warehouse project arrive next
+week. Each scanner must sync stock counts to the WMS every 10 minutes.
+Training sessions are booked for Thursday.
+
+Dev
