@@ -1,8 +1,10 @@
-"""Pipeline: filter emails -> extract facts -> write BRD -> write SRS.
+"""Pipeline: filter emails -> extract requirement registry -> (validate) -> BRD -> SRS.
 
 Every Claude call returns JSON constrained to a Pydantic model's schema, which is
 then validated into that model. The combined source text is the first, cached
 block of each main-model request, so the BRD and SRS calls reuse it cheaply.
+Validation of the registry happens in code (see validate.py) between extraction
+and document writing; the BRD/SRS calls only write narrative sections.
 """
 
 from __future__ import annotations
@@ -16,11 +18,14 @@ from pydantic import BaseModel, ValidationError
 
 from . import config, prompts
 from .models import (
-    BRD, SRS, EmailVerdicts, ExtractedFacts, SourceDoc, strict_schema,
+    BRD, SRS, EmailVerdicts, ExtractedFacts, ProjectContext, Registry, SourceDoc, strict_schema,
 )
 
 log = logging.getLogger(__name__)
 M = TypeVar("M", bound=BaseModel)
+
+# Model ids actually used by the API (after any fallback), for the audit log.
+MODELS_USED: list[str] = []
 
 
 class GenerationError(RuntimeError):
@@ -63,6 +68,7 @@ def generate(client: anthropic.Anthropic, schema: type[M], content: list[dict], 
         message = stream.get_final_message()
 
     _check_stop(message, label)
+    MODELS_USED.append(message.model)
     usage = message.usage
     log.info(
         "%s: done (model=%s, input=%s, cache_read=%s, cache_write=%s, output=%s)",
@@ -120,6 +126,7 @@ def filter_emails(
                 project=project, aliases=alias_text, context=context, emails=listing)}],
             output_config={"format": {"type": "json_schema", "schema": strict_schema(EmailVerdicts)}},
         )
+        MODELS_USED.append(response.model)
         verdicts = {}
         if response.stop_reason == "end_turn":
             try:
@@ -179,35 +186,54 @@ def _chunk(docs: list[SourceDoc], total_tokens: int) -> list[list[SourceDoc]]:
     return chunks
 
 
+def _previous_section(previous: dict | None) -> str:
+    if not previous:
+        return ""
+    registry = {k: previous.get(k, []) for k in ("requirements", "conflicts", "open_questions")}
+    return prompts.PREVIOUS.format(registry=json.dumps(registry, indent=1))
+
+
+def _extract_both(client, block: dict, previous: dict | None, label: str) -> tuple[Registry, ProjectContext]:
+    """Two calls over the same (cached) sources block: the registry, then the context."""
+    registry_prompt = prompts.EXTRACT_REGISTRY.format(previous=_previous_section(previous))
+    registry = generate(client, Registry, [block, {"type": "text", "text": registry_prompt}],
+                        f"{label} requirements")
+    context = generate(client, ProjectContext, [block, {"type": "text", "text": prompts.EXTRACT_CONTEXT}],
+                       f"{label} context")
+    return registry, context
+
+
+def _merge(client, project: str, schema: type[M], partials: list[dict], extra: str, label: str) -> M:
+    text = prompts.MERGE.format(partials=json.dumps(partials, indent=1)) + extra
+    return generate(client, schema, [{"type": "text", "text": f"Project: {project}\n\n" + text}], label)
+
+
 def extract_facts(
-    client: anthropic.Anthropic, project: str, docs: list[SourceDoc]
+    client: anthropic.Anthropic, project: str, docs: list[SourceDoc], previous: dict | None = None
 ) -> tuple[ExtractedFacts, dict | None]:
-    """Returns the facts and, when all sources fit in one request, the cached sources
-    block to reuse in the BRD/SRS calls (None when chunking was needed)."""
+    """Returns the registry and, when all sources fit in one request, the cached sources
+    block to reuse in the BRD/SRS calls (None when chunking was needed).
+
+    `previous` is the registry of an earlier run; its ids are preserved."""
     block = _sources_content(project, docs)
     tokens = _count_tokens(client, block)
     log.info("Sources total about %d tokens", tokens)
 
     if tokens <= config.CHUNK_THRESHOLD_TOKENS:
-        facts = generate(client, ExtractedFacts, [block, {"type": "text", "text": prompts.EXTRACT}], "Extract")
-        return facts, block
+        registry, context = _extract_both(client, block, previous, "Extract")
+        return ExtractedFacts.combine(context, registry), block
 
     chunks = _chunk(docs, tokens)
     log.info("Sources too large for one pass; extracting in %d chunks", len(chunks))
-    partials = []
+    registries, contexts = [], []
     for i, chunk in enumerate(chunks, start=1):
-        chunk_block = _sources_content(project, chunk)
-        partial = generate(client, ExtractedFacts,
-                           [chunk_block, {"type": "text", "text": prompts.EXTRACT}],
-                           f"Extract chunk {i}/{len(chunks)}")
-        partials.append(partial.model_dump())
-    merged = generate(
-        client, ExtractedFacts,
-        [{"type": "text", "text": f"Project: {project}\n\n" + prompts.MERGE.format(
-            partials=json.dumps(partials, indent=1))}],
-        "Merge",
-    )
-    return merged, None
+        registry, context = _extract_both(client, _sources_content(project, chunk), previous,
+                                          f"Extract chunk {i}/{len(chunks)}")
+        registries.append(registry.model_dump())
+        contexts.append(context.model_dump())
+    registry = _merge(client, project, Registry, registries, _previous_section(previous), "Merge requirements")
+    context = _merge(client, project, ProjectContext, contexts, "", "Merge context")
+    return ExtractedFacts.combine(context, registry), None
 
 
 # ---------------------------------------------------------------- documents
@@ -229,33 +255,3 @@ def write_srs(client, project: str, facts: ExtractedFacts, brd: BRD, sources_blo
     )
     content = ([sources_block] if sources_block else [{"type": "text", "text": f"Project: {project}"}])
     return generate(client, SRS, content + [{"type": "text", "text": text}], "SRS")
-
-
-# ---------------------------------------------------------------- checks
-
-def consistency_warnings(brd: BRD, srs: SRS, source_ids: set[str]) -> list[str]:
-    """Traceability checks done in code, so they are reliable."""
-    warnings: list[str] = []
-    br_ids = {br.id for br in brd.business_requirements}
-    covered: set[str] = set()
-    for fr in srs.functional_requirements:
-        if not fr.br_refs:
-            warnings.append(f"{fr.id} is not linked to any business requirement")
-        for ref in fr.br_refs:
-            if ref in br_ids:
-                covered.add(ref)
-            else:
-                warnings.append(f"{fr.id} references unknown {ref}")
-    for missing in sorted(br_ids - covered):
-        warnings.append(f"{missing} is not implemented by any functional requirement")
-
-    cited = [(br.id, br.source_ids) for br in brd.business_requirements]
-    cited += [(fr.id, fr.source_ids) for fr in srs.functional_requirements]
-    cited += [(nfr.id, nfr.source_ids) for nfr in srs.non_functional_requirements]
-    for item_id, ids in cited:
-        if not ids:
-            warnings.append(f"{item_id} cites no source")
-        for sid in ids:
-            if sid not in source_ids:
-                warnings.append(f"{item_id} cites unknown source {sid}")
-    return warnings
